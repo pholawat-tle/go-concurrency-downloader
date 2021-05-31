@@ -5,16 +5,19 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 )
 
 var commandList = map[string]func(params []string){
 	"help": helpCommand,
 	"test": testCommand,
+	"download": downloadCommand,
 }
 
 var helpList = map[string]string{
-	"help": "Definition of help command",
-	"test": "Test if the server supports partial request",
+	"help": "	Definition of help command",
+	"test": "	Test if the server supports partial request",
+	"download": "Download file from a URL",
 }
 
 var helpText = "\nUsage: concurrent-downloader COMMAND [PARAMETERS]\n\nCommands:\n"
@@ -88,3 +91,28 @@ func testCommand(params []string){
 		}
 	}
 }
+
+func downloadCommand(params []string) {
+	if len(params) != 1 {
+		fmt.Println("Invalid Input : This command expects 1 parameter, which is the file's URL")
+	}else{
+		res, err := http.Head(params[0])
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if res.StatusCode == http.StatusOK && res.Header.Get("Accept-Ranges") == "bytes" {
+			contentSize, err := strconv.Atoi(res.Header.Get("Content-Length"))
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println("Start Concurrent Download...")
+			_ = contentSize
+		} else {
+			fmt.Println("Start Simple Download...")
+		}
+	}
+	
+}
+
+
