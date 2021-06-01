@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"sync"
 )
 
 var commandList = map[string]func(params []string){
@@ -106,8 +107,7 @@ func downloadCommand(params []string) {
 			if err != nil {
 				log.Fatal(err)
 			}
-			simpleDownload(params[0])
-			_ = contentSize
+			multiPartDownload(params[0], contentSize)
 		} else {
 			simpleDownload(params[0])
 		}
@@ -137,4 +137,94 @@ func simpleDownload(url string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func multiPartDownload(url string, contentSize int) {
+	partSize := contentSize / 16
+
+	startRange := 0
+	wg := &sync.WaitGroup{}
+	wg.Add(16)
+
+	for i := 1; i <= 16; i++ {
+		if i == 16 {
+			go downloadPartial(startRange, contentSize, i, wg, url)
+		} else {
+			go downloadPartial(startRange, startRange+partSize, i, wg, url)
+		}
+
+		startRange += partSize + 1
+	}
+
+	wg.Wait()
+	merge(url)
+}
+
+func downloadPartial(rangeStart int, rangeStop int, partNo int, wg *sync.WaitGroup, url string) {
+	defer wg.Done()
+	fmt.Printf("Downloading part %d from byte %d to %d\n", partNo, rangeStart, rangeStop)
+
+	if rangeStart >= rangeStop {
+		// nothing to download
+		return
+	}
+
+	// create a request
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", rangeStart, rangeStop))
+
+	// make a request
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer res.Body.Close()
+
+	// create the output file
+	outputPath := getPartFilename(path.Base(url), partNo)
+	flags := os.O_CREATE | os.O_WRONLY
+
+	f, err := os.OpenFile(outputPath, flags, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+
+	// copy to output file
+	for {
+		_, err = io.CopyN(io.MultiWriter(f), res.Body, int64(1024))
+		if err != nil {
+			if err == io.EOF {
+				return
+			} else {
+				log.Fatal(err)
+			}
+		}
+	}
+}
+
+func merge(url string) {
+	destination, err := os.OpenFile(path.Base(url), os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer destination.Close()
+
+	for i := 1; i <= 16; i++ {
+		filename := getPartFilename(path.Base(url), i)
+		source, err := os.OpenFile(filename, os.O_RDONLY, 0666)
+		if err != nil {
+			log.Fatal(err)
+		}
+		io.Copy(destination, source)
+		source.Close()
+		os.Remove(filename)
+	}
+}
+
+func getPartFilename(outName string, partNum int) string {
+	return outName + ".part" + strconv.Itoa(partNum)
 }
